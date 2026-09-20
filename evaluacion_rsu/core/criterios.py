@@ -50,6 +50,16 @@ class TipoExclusion(Enum):
     TRASLAPE = "traslape"       # Exclusión por superposición directa
     BUFFER   = "buffer"         # Exclusión por zona de amortiguamiento
 
+    # Excluye lo que queda DEMASIADO LEJOS de la capa, no demasiado cerca.
+    # Es el caso de la red vial: un sitio inaccesible para los camiones
+    # recolectores se descarta aunque no incumpla ninguna distancia mínima.
+    # La superficie excluida es el área de interés menos el buffer del umbral.
+    LEJANIA = "lejania"
+
+    # Excluye según el valor de un ráster continuo, no según geometría.
+    # Es el caso de la pendiente: se descarta lo que supere el umbral.
+    UMBRAL_RASTER = "umbral_raster"
+
 
 class TipoScore(Enum):
     """Dirección del score en el análisis de ponderación."""
@@ -89,6 +99,27 @@ class Criterio:
     peso: float = 0.0               # Peso asignado por el usuario (0–100)
     rango_optimo_min: Optional[float] = None
     rango_optimo_max: Optional[float] = None
+
+    # ── Criterios de superficie continua (distancia o valor de ráster) ─────
+    # Estos criterios no se evalúan por traslape: cada celda del territorio
+    # tiene un valor —su distancia a la vía más cercana, su pendiente— y el
+    # criterio se configura con números, no eligiendo un campo de atributos.
+    #
+    # umbral_exclusion: el límite que descarta cuando el rol es «excluyente».
+    #   LEJANIA       → distancia máxima aceptable en metros (más lejos, fuera).
+    #   UMBRAL_RASTER → valor máximo aceptable (p. ej. 25 % de pendiente).
+    umbral_exclusion: Optional[float] = None
+
+    # Escala continua para cuando el rol es «ponderado»: el puntaje interpola
+    # linealmente entre el valor óptimo (1.0) y el peor (0.0). Se define así y
+    # no al revés porque «óptimo» y «peor» se leen igual sin importar si el
+    # criterio mejora al crecer o al decrecer: para vialidad el óptimo es 0 m
+    # y el peor 5 000 m; para pendiente el óptimo podría ser 5 % y el peor 30 %.
+    escala_optimo: Optional[float] = None
+    escala_peor: Optional[float] = None
+
+    # Unidad de los tres valores anteriores, para rotular la interfaz.
+    unidad_umbral: str = "m"
 
     # ── Estado en tiempo de ejecución ──────────────────────────────────────
     activo: bool = True
@@ -646,9 +677,15 @@ CRITERIOS_DEFAULT: list[Criterio] = [
             "Formatos admitidos: .tif, .img, .asc, .vrt."
         ),
         es_exclusion=True,
-        tipo_exclusion=TipoExclusion.TRASLAPE,
+        tipo_exclusion=TipoExclusion.UMBRAL_RASTER,
         buffer_m=0.0,
         buffer_min_nom=0.0,
+        # Excluyente: se descarta lo que supere esta pendiente.
+        umbral_exclusion=25.0,
+        # Ponderado: 5 % de pendiente puntúa 1.0 y 30 % puntúa 0.0.
+        escala_optimo=5.0,
+        escala_peor=30.0,
+        unidad_umbral="%",
         es_ponderacion=True,
         tipo_score=TipoScore.RANGO_OPTIMO,
         rango_optimo_min=2.0,
@@ -677,12 +714,22 @@ CRITERIOS_DEFAULT: list[Criterio] = [
             "  https://www.inegi.org.mx/temas/vialidad/\n"
             "O exporte la capa 'red_vial' del archivo rnc2025.gpkg si ya lo tiene descargado."
         ),
-        es_exclusion=False,
+        # Se evalúa por la distancia de cada celda a la vía más cercana, no por
+        # traslape: un sitio no se descarta por tocar una carretera, se descarta
+        # por quedar fuera del alcance de los camiones recolectores.
+        es_exclusion=True,
+        tipo_exclusion=TipoExclusion.LEJANIA,
+        # Excluyente: se descarta lo que quede a más de esta distancia.
+        umbral_exclusion=5000.0,
+        # Ponderado: pegado a la vía puntúa 1.0; a 10 km puntúa 0.0.
+        escala_optimo=0.0,
+        escala_peor=10000.0,
+        unidad_umbral="m",
         es_ponderacion=True,
         tipo_score=TipoScore.MENOR_ES_MEJOR,
         peso=0.0,
         obligatorio=False,   # § 5.4 — fuera de §6.1 NOM-083
-        rol_ponderado="ponderado",  # solo aporta puntaje, no excluye
+        rol_ponderado="ponderado",  # por omisión solo aporta puntaje
     ),
 ]
 

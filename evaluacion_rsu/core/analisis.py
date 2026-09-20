@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from osgeo import gdal, ogr
+from osgeo import gdal, ogr, osr
 
 from qgis.core import (
     QgsCoordinateReferenceSystem,
@@ -75,6 +75,29 @@ from .criterios import (
 # ---------------------------------------------------------------------------
 # Identificación del build
 # ---------------------------------------------------------------------------
+
+def escala_pendiente(crs) -> float:
+    """Factor SCALE para gdal:slope según el CRS del modelo de elevación.
+
+    gdal:slope divide el desnivel entre la distancia horizontal expresada en
+    las unidades del ráster. Si el MDE está en coordenadas geográficas, esas
+    unidades son GRADOS mientras la elevación está en metros, y una celda de
+    0.005° se toma como 0.005 m: la pendiente sale exagerada unas 111 000
+    veces. Un terreno de 10 % se reporta como 1 200 000 %, supera cualquier
+    umbral razonable y el área entera queda descartada por «demasiado
+    empinada», sin que nada falle de forma visible.
+
+    SCALE es el número de unidades horizontales por unidad vertical: 111 120
+    para grados con elevación en metros (valor que documenta GDAL), 1 cuando
+    el ráster ya está en metros.
+    """
+    try:
+        if crs is not None and crs.isValid() and crs.isGeographic():
+            return 111_120.0
+    except Exception:  # noqa: BLE001
+        pass
+    return 1.0
+
 
 def _leer_version() -> str:
     """Lee version= de metadata.txt para identificar el build en el registro.
@@ -382,9 +405,21 @@ class MotorAnalisis(QObject):
                 return self._excluir_usv(capa)
             # Criterio especial: pendiente — generar desde ráster
             if criterio.id == "pendiente" and isinstance(capa, QgsRasterLayer):
-                return self._excluir_pendiente(capa, umbral=25.0)
+                return self._excluir_pendiente(
+                    capa, umbral=self._umbral(criterio, 25.0))
             # Caso general: unión de geometrías (con filtro de atributos si aplica)
             return self._union_geometrias(capa, criterio)
+
+        elif criterio.tipo_exclusion == TipoExclusion.UMBRAL_RASTER:
+            if isinstance(capa, QgsRasterLayer):
+                return self._excluir_pendiente(
+                    capa, umbral=self._umbral(criterio, 25.0))
+            # La capa ya viene vectorizada (p. ej. el descargador entregó los
+            # polígonos que superan el umbral): se usa tal cual.
+            return self._union_geometrias(capa, criterio)
+
+        elif criterio.tipo_exclusion == TipoExclusion.LEJANIA:
+            return self._excluir_por_lejania(criterio)
 
         elif criterio.tipo_exclusion == TipoExclusion.BUFFER:
             buffer_m = criterio.buffer_m
@@ -869,6 +904,61 @@ class MotorAnalisis(QObject):
 
         return self._a_crs_aoi(self._union_segura(geoms, "USV"), crs_capa)
 
+    @staticmethod
+    def _umbral(criterio, por_defecto: float) -> float:
+        """Umbral de exclusión del criterio, con respaldo si no está definido."""
+        valor = getattr(criterio, "umbral_exclusion", None)
+        try:
+            valor = float(valor)
+        except (TypeError, ValueError):
+            return por_defecto
+        return valor if valor > 0 else por_defecto
+
+    def _excluir_por_lejania(self, criterio) -> QgsGeometry:
+        """Excluye la superficie que queda MÁS LEJOS del umbral, no más cerca.
+
+        Es el inverso de un buffer. Para la red vial, un sitio no se descarta
+        por estar junto a una carretera sino por quedar fuera del alcance de
+        los camiones recolectores: lo prohibitivo es la lejanía.
+
+        La superficie excluida es, entonces, el área de interés menos la franja
+        accesible (el buffer del umbral alrededor de las vías).
+        """
+        umbral = self._umbral(criterio, 5000.0)
+        geom_aoi = self._geom_aoi_cacheada()
+
+        geom_capa = self._union_geometrias(criterio.capa, criterio)
+        if geom_capa is None or geom_capa.isEmpty():
+            # Sin una sola vía en el entorno, TODA el área queda inaccesible.
+            # Es un resultado legítimo, pero es indistinguible de una capa que
+            # no se descargó, así que se avisa en lugar de excluirlo todo en
+            # silencio.
+            self.progreso.emit(
+                -1,
+                f"        ⚠ {criterio.nombre}: no se encontró ninguna geometría "
+                f"en el entorno del área. Se omite el criterio en lugar de "
+                f"declarar toda el área inaccesible; verifique que la capa "
+                f"cubra esta región.")
+            return QgsGeometry()
+
+        accesible = self._buffer_metrico(geom_capa, umbral, self.aoi.crs())
+        if accesible is None or accesible.isEmpty():
+            return QgsGeometry()
+
+        try:
+            excluida = geom_aoi.difference(accesible)
+        except Exception:  # noqa: BLE001
+            excluida = QgsGeometry()
+
+        if excluida is None:
+            return QgsGeometry()
+
+        self.progreso.emit(
+            -1,
+            f"        Exclusión por lejanía: se descarta lo que quede a más de "
+            f"{umbral:,.0f} m de {criterio.nombre.lower()}")
+        return excluida
+
     def _excluir_pendiente(
         self, raster_dem: QgsRasterLayer, umbral: float = 25.0
     ) -> QgsGeometry:
@@ -877,30 +967,87 @@ class MotorAnalisis(QObject):
         mascara_tif   = str(self.dir_salida / "mascara_pendiente.tif")
         vector_shp    = str(self.dir_salida / "excluir_pendiente.gpkg")
 
-        # 1. Calcular pendiente
-        processing.run("gdal:slope", {
-            "INPUT": raster_dem,
-            "BAND": 1,
-            "AS_PERCENT": True,
-            "OUTPUT": pendiente_tif,
-        }, context=self._ctx, feedback=self._feedback)
+        # Los tres pasos usan las APIs de GDAL en proceso, no los algoritmos
+        # «gdal:*» de processing. Esos invocan scripts externos —gdal_calc.py,
+        # gdal_polygonize.py— cuya disponibilidad depende del PATH y de a qué
+        # intérprete de Python apunta su cabecera. Cuando fallan, lo hacen con
+        # un código de error que el bucle de criterios absorbe, y el análisis
+        # termina informando 0.00 km² excluidos por pendiente como si el
+        # terreno fuera plano.
 
-        # 2. Umbralizar: pendiente > umbral → 1, resto → 0
-        formula = f'"A" > {umbral}'
-        processing.run("gdal:rastercalculator", {
-            "INPUT_A": pendiente_tif,
-            "BAND_A": 1,
-            "FORMULA": formula,
-            "OUTPUT": mascara_tif,
-        }, context=self._ctx, feedback=self._feedback)
+        # 1. Calcular pendiente con gdal.DEMProcessing
+        escala = escala_pendiente(raster_dem.crs())
+        if escala != 1.0:
+            self.progreso.emit(
+                -1,
+                f"        MDE en coordenadas geográficas: se aplica "
+                f"SCALE={escala:,.0f} para que la pendiente salga en % reales")
 
-        # 3. Vectorizar máscara
-        processing.run("gdal:polygonize", {
-            "INPUT": mascara_tif,
-            "BAND": 1,
-            "FIELD": "valor",
-            "OUTPUT": vector_shp,
-        }, context=self._ctx, feedback=self._feedback)
+        ruta_dem = raster_dem.source().split("|")[0] \
+            if hasattr(raster_dem, "source") else str(raster_dem)
+        gdal.DEMProcessing(
+            pendiente_tif, ruta_dem, "slope",
+            options=gdal.DEMProcessingOptions(
+                slopeFormat="percent", scale=escala, computeEdges=True),
+        )
+
+        # 2. Umbralizar con numpy: pendiente > umbral → 1, resto → 0
+        ds_p = gdal.Open(pendiente_tif)
+        if ds_p is None:
+            self.progreso.emit(
+                -1, "        ⚠ No se pudo calcular la pendiente del MDE")
+            return QgsGeometry()
+        banda_p = ds_p.GetRasterBand(1)
+        nodata_p = banda_p.GetNoDataValue()
+        pend = banda_p.ReadAsArray().astype(np.float32)
+        gt, proj = ds_p.GetGeoTransform(), ds_p.GetProjection()
+        filas, columnas = pend.shape
+        ds_p = None
+
+        valido = np.isfinite(pend)
+        if nodata_p is not None:
+            valido &= (pend != float(nodata_p))
+        mascara = np.where(valido & (pend > umbral), 1, 0).astype(np.uint8)
+
+        n_celdas = int(mascara.sum())
+        self.progreso.emit(
+            -1,
+            f"        Pendiente: {n_celdas:,} de {int(valido.sum()):,} celdas "
+            f"superan el {umbral:g} %")
+        if n_celdas == 0:
+            return QgsGeometry()
+
+        ds_m = gdal.GetDriverByName("GTiff").Create(
+            mascara_tif, columnas, filas, 1, gdal.GDT_Byte)
+        ds_m.SetGeoTransform(gt)
+        ds_m.SetProjection(proj)
+        banda_m = ds_m.GetRasterBand(1)
+        banda_m.SetNoDataValue(0)
+        banda_m.WriteArray(mascara)
+        ds_m.FlushCache()
+        ds_m = None
+
+        # 3. Vectorizar la máscara con gdal.Polygonize, usando la propia banda
+        #    como máscara: solo se vectorizan las celdas con valor 1, así que
+        #    no hace falta filtrar después los polígonos de valor 0.
+        ds_m = gdal.Open(mascara_tif)
+        banda_m = ds_m.GetRasterBand(1)
+
+        drv_ogr = ogr.GetDriverByName("GPKG")
+        if os.path.exists(vector_shp):
+            drv_ogr.DeleteDataSource(vector_shp)
+        ds_v = drv_ogr.CreateDataSource(vector_shp)
+        srs = osr.SpatialReference()
+        if proj:
+            srs.ImportFromWkt(proj)
+        capa_ogr = ds_v.CreateLayer("excluir_pendiente", srs=srs,
+                                    geom_type=ogr.wkbPolygon)
+        capa_ogr.CreateField(ogr.FieldDefn("valor", ogr.OFTInteger))
+
+        gdal.Polygonize(banda_m, banda_m, capa_ogr, 0, [], callback=None)
+
+        ds_v = None
+        ds_m = None
 
         capa_vector = QgsVectorLayer(vector_shp, "excluir_pendiente", "ogr")
         if not capa_vector.isValid():
@@ -1092,18 +1239,117 @@ class MotorAnalisis(QObject):
             dst_ds = None
 
             norm_tif = base + "_norm.tif"
-            self._normalizar_raster(
-                dist_tif, norm_tif,
-                invertir=(criterio.tipo_score == TipoScore.MENOR_ES_MEJOR),
-            )
+
+            # Si el criterio trae una escala explícita, se usa: anclar el
+            # puntaje a valores que el usuario fijó hace comparables dos
+            # análisis distintos. La normalización por mínimo y máximo
+            # observados, en cambio, depende de los datos de cada corrida: el
+            # sitio más cercano a una vía siempre puntúa 1.0, esté a 50 m o a
+            # 8 km, lo que hace que dos municipios no se puedan comparar.
+            optimo, peor = self._escala(criterio)
+            if optimo is not None:
+                factor = self._resolucion_en_unidades_mapa(
+                    1.0, QgsCoordinateReferenceSystem(crs_id))
+                self._normalizar_escala(
+                    dist_tif, norm_tif,
+                    optimo=optimo * factor, peor=peor * factor,
+                )
+                self.progreso.emit(
+                    -1,
+                    f"        Escala continua: {optimo:,.0f} m → 1.00, "
+                    f"{peor:,.0f} m → 0.00")
+            else:
+                self._normalizar_raster(
+                    dist_tif, norm_tif,
+                    invertir=(criterio.tipo_score == TipoScore.MENOR_ES_MEJOR),
+                )
             return norm_tif
 
         elif criterio.tipo_score == TipoScore.RANGO_OPTIMO:
             norm_tif = base + "_norm.tif"
-            self._normalizar_rango_optimo(criterio, norm_tif, extent_str, res, crs_id)
+            optimo, peor = self._escala(criterio)
+            if optimo is not None:
+                # Escala continua sobre los valores del ráster (p. ej. 5 % de
+                # pendiente → 1.00, 30 % → 0.00). Las unidades son las del
+                # propio ráster, así que no hay conversión que aplicar.
+                ruta = self._ruta_raster_continuo(criterio)
+                self._normalizar_escala(ruta, norm_tif, optimo=optimo, peor=peor)
+                unidad = getattr(criterio, "unidad_umbral", "") or ""
+                self.progreso.emit(
+                    -1,
+                    f"        Escala continua: {optimo:g} {unidad} → 1.00, "
+                    f"{peor:g} {unidad} → 0.00")
+            else:
+                self._normalizar_rango_optimo(
+                    criterio, norm_tif, extent_str, res, crs_id)
             return norm_tif
 
         return None
+
+    @staticmethod
+    def _escala(criterio) -> tuple:
+        """Extremos de la escala continua, o (None, None) si no está definida.
+
+        Se exige que ambos existan y sean distintos: una escala con un solo
+        extremo, o con los dos iguales, produciría una división entre cero y un
+        ráster de aptitud constante que no dice nada.
+        """
+        optimo = getattr(criterio, "escala_optimo", None)
+        peor = getattr(criterio, "escala_peor", None)
+        try:
+            optimo, peor = float(optimo), float(peor)
+        except (TypeError, ValueError):
+            return (None, None)
+        if abs(optimo - peor) < 1e-9:
+            return (None, None)
+        return (optimo, peor)
+
+    def _ruta_raster_continuo(self, criterio) -> str:
+        """Ruta del ráster de valores continuos de un criterio."""
+        ruta = getattr(criterio, "ruta_raster_continuo", None)
+        if ruta:
+            return str(ruta)
+        capa = criterio.capa
+        if hasattr(capa, "source"):
+            return capa.source().split("|")[0]
+        return str(capa)
+
+    def _normalizar_escala(
+        self, entrada: str, salida: str, optimo: float, peor: float
+    ) -> None:
+        """Puntaje lineal anclado a dos valores que el usuario define.
+
+        El valor «óptimo» puntúa 1.0 y el «peor» 0.0; en medio se interpola y
+        fuera del intervalo se recorta. La fórmula sirve en ambas direcciones
+        sin distinguir casos: si el óptimo es menor que el peor, el criterio
+        mejora al decrecer (distancia a una vía); si es mayor, mejora al crecer.
+        """
+        ds = gdal.Open(entrada)
+        if ds is None:
+            raise RuntimeError(f"No se pudo abrir el ráster: {entrada}")
+        band = ds.GetRasterBand(1)
+        nodata_val = band.GetNoDataValue()
+        data = band.ReadAsArray().astype(np.float32)
+        gt, proj = ds.GetGeoTransform(), ds.GetProjection()
+        rows, cols = data.shape
+        ds = None
+
+        mask = np.isfinite(data)
+        if nodata_val is not None:
+            mask &= (data != float(nodata_val))
+
+        score = np.clip((data - peor) / (optimo - peor), 0.0, 1.0)
+        out = np.where(mask, score, -9999).astype(np.float32)
+
+        drv = gdal.GetDriverByName("GTiff")
+        out_ds = drv.Create(salida, cols, rows, 1, gdal.GDT_Float32)
+        out_ds.SetGeoTransform(gt)
+        out_ds.SetProjection(proj)
+        out_band = out_ds.GetRasterBand(1)
+        out_band.SetNoDataValue(-9999)
+        out_band.WriteArray(out)
+        out_ds.FlushCache()
+        out_ds = None
 
     def _raster_edafologia(
         self,

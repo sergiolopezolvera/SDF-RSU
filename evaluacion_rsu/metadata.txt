@@ -2,7 +2,7 @@
 name=Evaluación RSU
 qgisMinimumVersion=3.16
 description=Evaluación multicriterio para la selección de sitios de disposición final de residuos sólidos urbanos en México (NOM-083-SEMARNAT-2003)
-version=1.5.6
+version=1.6.0
 author=Sergio López Olvera
 email=lopezolverasergio@gmail.com
 
@@ -43,6 +43,27 @@ server=False
 hasProcessingProvider=False
 
 changelog=
+    1.6.0
+    - Red vial: deja de evaluarse por traslape. Se mide la distancia de cada
+      punto a la vía más cercana; como excluyente descarta lo que quede más
+      lejos del umbral, y como ponderado usa una escala continua.
+    - Pendiente: el umbral de exclusión dejó de estar fijo en 25 % y la
+      ponderación admite una escala continua.
+    - Corregido: gdal:slope se llamaba con SCALE=1 sobre modelos de elevación
+      en coordenadas geográficas (Copernicus, SRTM), lo que exageraba la
+      pendiente unas 111 000 veces y descartaba el área entera por empinada.
+    - Corregido: el cálculo de pendiente dependía de gdal_calc.py y
+      gdal_polygonize.py, scripts externos sujetos al PATH; al fallar, el
+      error se absorbía y el criterio aportaba 0.00 km² en silencio. Ahora se
+      usan las APIs de GDAL en proceso.
+    - Corregido: el Paso 6 recibía los criterios antes de que se sincronizara
+      el rol elegido en el Paso 4, de modo que no podía conocerlo.
+    - El Paso 6 pasa a ser «Configuración por criterio»: muestra el rol de cada
+      uno e incluye pendiente y red vial, que antes no aparecían por no tener
+      campos de atributos.
+    - El selector Excluyente/Ponderado es ahora un botón de dos estados.
+    - Pruebas: nuevo conjunto de criterios continuos (21 comprobaciones).
+
     1.5.6
     - Enlaces de repositorio, tracker y homepage actualizados al repositorio
       público del proyecto.

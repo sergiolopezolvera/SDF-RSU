@@ -14,7 +14,7 @@ Páginas:
   2 — Paso 3: Carga / descarga de datos por criterio
   3 — Paso 4: Configuración del análisis de exclusión
   4 — Paso 5: Configuración de ponderación
-  5 — Paso 6: Mapeo de atributos para capas cargadas manualmente
+  5 — Paso 6: Configuración por criterio (mapeo de atributos y umbrales)
   6 — Paso 7: Ejecución y resultados
 """
 
@@ -473,6 +473,77 @@ def _chip(texto: str, estilo: str, tooltip: str = "") -> QLabel:
     return lbl
 
 
+# ── Selector de dos estados ────────────────────────────────────────────────
+
+def _estilo_segmento(activo: bool, primero: bool, ultimo: bool) -> str:
+    """Hoja de estilo de un segmento del selector: verde si activo, gris si no."""
+    if activo:
+        fondo, texto, borde = COLOR_PRIMARIO, "#FFFFFF", COLOR_PRIMARIO
+    else:
+        fondo, texto, borde = "#FFFFFF", COLOR_TEXTO_SUAVE, COLOR_BORDE
+    izq = "5px" if primero else "0px"
+    der = "5px" if ultimo else "0px"
+    return (
+        f"QPushButton {{ background: {fondo}; color: {texto};"
+        f" border: 1px solid {borde};"
+        f" border-top-left-radius: {izq}; border-bottom-left-radius: {izq};"
+        f" border-top-right-radius: {der}; border-bottom-right-radius: {der};"
+        f" padding: 3px 10px; font-size: {FS_META}px;"
+        f" font-weight: {'bold' if activo else 'normal'}; }}"
+        f"QPushButton:hover {{ border-color: {COLOR_PRIMARIO}; }}"
+    )
+
+
+def _selector_segmentado(opciones, valor_actual, al_cambiar,
+                         tooltips=None, ancho_segmento: int = 96):
+    """Grupo de botones excluyentes: el elegido en verde, el resto en gris.
+
+    Sustituye al par de QRadioButton. El punto de un radio es diminuto y, en
+    una tabla de catorce filas, obliga a rastrear con la vista cuál de los dos
+    está marcado; el color del propio botón se lee de un vistazo.
+
+    ``opciones`` es una lista de (valor, etiqueta). Devuelve el contenedor y un
+    diccionario valor → botón, por si hay que habilitarlos o deshabilitarlos.
+    """
+    cont = QWidget()
+    cont.setStyleSheet("background: transparent;")
+    lay = QHBoxLayout(cont)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+
+    botones: dict = {}
+    total = len(opciones)
+
+    def _pintar(seleccionado):
+        for i, (valor, _etq) in enumerate(opciones):
+            botones[valor].setStyleSheet(
+                _estilo_segmento(valor == seleccionado, i == 0, i == total - 1))
+
+    for i, (valor, etiqueta) in enumerate(opciones):
+        btn = QPushButton(etiqueta)
+        btn.setCheckable(True)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedWidth(ancho_segmento)
+        if tooltips and valor in tooltips:
+            btn.setToolTip(tooltips[valor])
+        botones[valor] = btn
+        lay.addWidget(btn)
+
+        def _click(_checked=False, v=valor):
+            for b in botones.values():
+                b.setChecked(False)
+            botones[v].setChecked(True)
+            _pintar(v)
+            al_cambiar(v)
+
+        btn.clicked.connect(_click)
+
+    botones[valor_actual].setChecked(True)
+    _pintar(valor_actual)
+    lay.addStretch()
+    return cont, botones
+
+
 # ===========================================================================
 # PÁGINA 0 — Bienvenida y área de interés
 # ===========================================================================
@@ -715,7 +786,7 @@ class PaginaCriterios(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._checkboxes: dict[str, object] = {}   # id → QCheckBox
-        self._rol_grupos: dict[str, object] = {}   # id → QButtonGroup
+        self._rol_grupos: dict[str, dict] = {}   # id → {valor: QPushButton}
         self._build_ui()
 
     def _build_ui(self):
@@ -857,31 +928,17 @@ class PaginaCriterios(QWidget):
         row.addWidget(norma_w)
 
         if mostrar_rol:
-            rol_w = QWidget()
-            rol_w.setFixedWidth(self._COL_ROL)
-            rol_w.setStyleSheet("background: transparent;")
-            rol_h = QHBoxLayout(rol_w)
-            rol_h.setContentsMargins(0, 0, 0, 0)
-            rol_h.setSpacing(10)
-            rad_excl = _RB("Excluyente")
-            rad_excl.setToolTip("Descarta zonas que no cumplen (máscara binaria).")
-            rad_pond = _RB("Ponderado")
-            rad_pond.setToolTip("Aporta puntaje de aptitud con un peso asignado.")
-            grp = _BG(w)
-            grp.addButton(rad_excl, 0)
-            grp.addButton(rad_pond, 1)
-            if criterio.rol_ponderado == "ponderado":
-                rad_pond.setChecked(True)
-            else:
-                rad_excl.setChecked(True)
-            grp.idClicked.connect(
-                lambda bid, c=criterio: setattr(c, "rol_ponderado",
-                                                "ponderado" if bid == 1 else "excluyente")
+            rol_w, botones = _selector_segmentado(
+                [("excluyente", "Excluyente"), ("ponderado", "Ponderado")],
+                criterio.rol_ponderado,
+                lambda v, c=criterio: setattr(c, "rol_ponderado", v),
+                tooltips={
+                    "excluyente": "Descarta zonas que no cumplen (máscara binaria).",
+                    "ponderado": "Aporta puntaje de aptitud con un peso asignado.",
+                },
             )
-            self._rol_grupos[criterio.id] = grp
-            rol_h.addWidget(rad_excl)
-            rol_h.addWidget(rad_pond)
-            rol_h.addStretch()
+            rol_w.setFixedWidth(self._COL_ROL)
+            self._rol_grupos[criterio.id] = botones
             row.addWidget(rol_w)
 
         row.addStretch(1)
@@ -1287,7 +1344,7 @@ class PaginaExclusion(QWidget):
         super().__init__(parent)
         self._spinboxes: dict[str, QDoubleSpinBox] = {}
         self._checkboxes: dict[str, QCheckBox] = {}
-        self._rol_grupos: dict[str, object] = {}   # criterio.id → QButtonGroup
+        self._rol_grupos: dict[str, dict] = {}   # criterio.id → {valor: QPushButton}
         self._modo = "dicotomico"
         self._build_ui()
 
@@ -1455,43 +1512,29 @@ class PaginaExclusion(QWidget):
 
         # Rol selector — solo visible en modo ponderado
         if self._modo == "ponderado":
-            rol_widget = QWidget()
-            rol_widget.setFixedWidth(self._COL_ROL)
-            rol_widget.setStyleSheet("background: transparent;")
-            rol_layout = QHBoxLayout(rol_widget)
-            rol_layout.setContentsMargins(0, 0, 0, 0)
-            rol_layout.setSpacing(10)
-            rad_excl = _RB("Excluyente")
-            rad_excl.setToolTip("Descarta zonas que no cumplen este criterio (máscara binaria).")
-            rad_pond = _RB("Ponderado")
-            rad_pond.setToolTip(
-                "Aporta un puntaje de aptitud; el peso se asigna en el Paso 5."
-            )
-            grp = _BG(w)
-            grp.addButton(rad_excl, 0)
-            grp.addButton(rad_pond, 1)
-            self._rol_grupos[criterio.id] = grp
-
-            # Restaurar valor previo
-            if criterio.rol_ponderado == "ponderado":
-                rad_pond.setChecked(True)
-                spin.setEnabled(False)   # ponderados no tienen buffer aquí
-            else:
-                rad_excl.setChecked(True)
-
-            def _on_rol_changed(btn_id, c=criterio, s=spin):
-                rol = "ponderado" if btn_id == 1 else "excluyente"
+            def _on_rol_changed(rol, c=criterio, s=spin):
                 c.rol_ponderado = rol
-                # spinbox de buffer solo aplica a excluyentes con tipo buffer
+                # El campo de buffer solo aplica a excluyentes de tipo buffer.
                 s.setEnabled(
-                    btn_id == 0 and c.tipo_exclusion.value == "buffer"
-                )
+                    rol == "excluyente" and c.tipo_exclusion.value == "buffer")
 
-            grp.idClicked.connect(_on_rol_changed)
+            rol_widget, botones = _selector_segmentado(
+                [("excluyente", "Excluyente"), ("ponderado", "Ponderado")],
+                criterio.rol_ponderado,
+                _on_rol_changed,
+                tooltips={
+                    "excluyente": "Descarta zonas que no cumplen este criterio "
+                                  "(máscara binaria).",
+                    "ponderado": "Aporta un puntaje de aptitud; el peso se "
+                                 "asigna en el Paso 5.",
+                },
+            )
+            rol_widget.setFixedWidth(self._COL_ROL)
+            self._rol_grupos[criterio.id] = botones
 
-            rol_layout.addWidget(rad_excl)
-            rol_layout.addWidget(rad_pond)
-            rol_layout.addStretch()
+            if criterio.rol_ponderado == "ponderado":
+                spin.setEnabled(False)   # ponderados no tienen buffer aquí
+
             layout.addWidget(rol_widget)
 
         layout.addStretch(1)
@@ -1705,7 +1748,7 @@ class PaginaPonderacion(QWidget):
 
 
 # ===========================================================================
-# PÁGINA 5 — Mapeo de atributos (dedicado)
+# PÁGINA 5 — Configuración por criterio (mapeo de atributos y umbrales)
 # ===========================================================================
 
 class PaginaMapeo(QWidget):
@@ -1721,14 +1764,18 @@ class PaginaMapeo(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        layout.addWidget(_etiqueta_titulo("Paso 6 de 7 — Mapeo de atributos"))
+        layout.addWidget(_etiqueta_titulo("Paso 6 de 7 — Configuración por criterio"))
         layout.addWidget(_separador())
 
         info = QLabel(
-            "Configure cómo se usan los atributos de cada capa cargada manualmente.<br>"
-            "Seleccione el campo y defina si sus valores son "
-            "<b>Prohibitivos</b> o <b>Permisivos</b> "
-            "(modo dicotómico) o asigne un <b>puntaje de aptitud</b> (modo ponderado).<br>"
+            "Configure cada criterio según cómo se evalúa.<br>"
+            "<b>Capas vectoriales:</b> elija el campo y defina si sus valores son "
+            "<b>Prohibitivos</b> o <b>Permisivos</b> (modo dicotómico), o asigne un "
+            "<b>puntaje de aptitud</b> (modo ponderado).<br>"
+            "<b>Superficies continuas</b> —pendiente y red vial—: defina el "
+            "<b>umbral</b> que descarta, o la <b>escala</b> de puntaje si el criterio "
+            "es ponderado.<br>"
+            "El rol de cada criterio se decide en el Paso 4; aquí solo se consulta.<br>"
             "Solo se muestran criterios con capa ya cargada."
         )
         info.setWordWrap(True)
@@ -1786,14 +1833,20 @@ class PaginaMapeo(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        # Se admiten dos clases de criterio: los que se configuran eligiendo un
+        # campo de atributos (capas vectoriales) y los de superficie continua
+        # —pendiente, red vial— que se configuran con umbrales numéricos. Estos
+        # últimos quedaban fuera porque un ráster no tiene .fields, de modo que
+        # el criterio de pendiente no aparecía en ningún lado del asistente.
         candidatos = [
             c for c in self._criterios_datos
-            if c.activo and c.capa is not None and hasattr(c.capa, "fields")
+            if c.activo and c.capa is not None
+            and (hasattr(c.capa, "fields") or self._es_continuo(c))
         ]
 
         if not candidatos:
             self._etq_sin_capas = QLabel(
-                "<i>No hay capas vectoriales manuales cargadas todavía.<br>"
+                "<i>No hay capas cargadas todavía.<br>"
                 "Cargue archivos en el Paso 3 y luego regrese aquí.</i>"
             )
             self._etq_sin_capas.setStyleSheet(
@@ -1803,9 +1856,10 @@ class PaginaMapeo(QWidget):
             self._layout_mapeo.addWidget(self._etq_sin_capas)
         else:
             self._layout_mapeo.addWidget(_cabecera_tabla([
-                ("Criterio",       self._COL_NOMBRE, Qt.AlignLeft),
-                ("Mapeo aplicado", self._COL_ESTADO, Qt.AlignLeft),
-                ("Configuración",  self._COL_ACCION, Qt.AlignLeft),
+                ("Criterio",      self._COL_NOMBRE, Qt.AlignLeft),
+                ("Rol",           self._COL_ROL,    Qt.AlignLeft),
+                ("Configuración", self._COL_ESTADO, Qt.AlignLeft),
+                ("",              self._COL_ACCION, Qt.AlignLeft),
             ]))
             for i, criterio in enumerate(candidatos):
                 self._layout_mapeo.addWidget(self._crear_fila_mapeo(criterio, i))
@@ -1813,9 +1867,29 @@ class PaginaMapeo(QWidget):
         self._layout_mapeo.addStretch()
 
     # ── Estado del mapeo por criterio ────────────────────────────────────
-    _COL_NOMBRE = 320
-    _COL_ESTADO = 220
-    _COL_ACCION = 156
+    _COL_NOMBRE = 300
+    _COL_ROL    = 108
+    _COL_ESTADO = 240
+    _COL_ACCION = 168
+
+    _ESTILO_CHIP_ROL_EXCL = (
+        "background: #FDECEA; color: #B3261E; border: 1px solid #F5C6C2; "
+        f"border-radius: 9px; padding: 1px 8px; font-size: {FS_MICRO}px;"
+    )
+    _ESTILO_CHIP_ROL_POND = (
+        "background: #E8F0FE; color: #1565C0; border: 1px solid #C6DAF7; "
+        f"border-radius: 9px; padding: 1px 8px; font-size: {FS_MICRO}px;"
+    )
+
+    # Criterios que no se configuran eligiendo un campo sino con umbrales.
+    _IDS_CONTINUOS = ("pendiente", "vialidad")
+
+    @staticmethod
+    def _es_continuo(criterio) -> bool:
+        """True si el criterio se evalúa sobre una superficie continua."""
+        tipo = getattr(criterio.tipo_exclusion, "value", "")
+        return tipo in ("lejania", "umbral_raster") or \
+            criterio.id in PaginaMapeo._IDS_CONTINUOS
 
     _ESTILO_CHIP_OK = (
         "background: #E8F1E9; color: #2E7D32; border: 1px solid #C3DEC6; "
@@ -1829,6 +1903,35 @@ class PaginaMapeo(QWidget):
     @staticmethod
     def _estado_mapeo(criterio) -> tuple[str, str, str]:
         """Devuelve (texto, estilo, tooltip) del chip de estado del criterio."""
+        if PaginaMapeo._es_continuo(criterio):
+            unidad = getattr(criterio, "unidad_umbral", "") or ""
+            if criterio.rol_ponderado == "ponderado":
+                opt = getattr(criterio, "escala_optimo", None)
+                peor = getattr(criterio, "escala_peor", None)
+                if opt is None or peor is None:
+                    return ("Escala sin definir",
+                            PaginaMapeo._ESTILO_CHIP_DEFECTO,
+                            "Defina los extremos de la escala de puntaje.")
+                return (
+                    f"Escala · {opt:g}–{peor:g} {unidad}".strip(),
+                    PaginaMapeo._ESTILO_CHIP_OK,
+                    f"Puntaje 1.00 en {opt:g} {unidad} y 0.00 en {peor:g} "
+                    f"{unidad}; se interpola linealmente entre ambos.",
+                )
+            umbral = getattr(criterio, "umbral_exclusion", None)
+            if umbral is None:
+                return ("Umbral sin definir",
+                        PaginaMapeo._ESTILO_CHIP_DEFECTO,
+                        "Defina el umbral que descarta.")
+            if getattr(criterio.tipo_exclusion, "value", "") == "lejania":
+                tip = (f"Se descarta la superficie que quede a más de "
+                       f"{umbral:,.0f} {unidad} de esta capa.")
+            else:
+                tip = (f"Se descarta la superficie cuyo valor supere "
+                       f"{umbral:g} {unidad}.")
+            return (f"Máx. {umbral:g} {unidad}".strip(),
+                    PaginaMapeo._ESTILO_CHIP_OK, tip)
+
         if criterio.filtro_tipo == "continuo":
             return (
                 f"Continuo · {criterio.filtro_campo}",
@@ -1856,6 +1959,29 @@ class PaginaMapeo(QWidget):
             tooltip=f"<b>{criterio.nombre}</b><br><br>{criterio.descripcion}",
         ))
 
+        # Columna de rol — refleja lo elegido en el Paso 4. Es de solo lectura
+        # a propósito: el rol se decide en un lugar y se consulta en el resto,
+        # para que no haya dos pantallas que puedan contradecirse.
+        rol_w = QWidget()
+        rol_w.setFixedWidth(self._COL_ROL)
+        rol_w.setStyleSheet("background: transparent;")
+        rol_l = QHBoxLayout(rol_w)
+        rol_l.setContentsMargins(0, 0, 0, 0)
+        if self._modo == "ponderado":
+            es_pond = criterio.rol_ponderado == "ponderado"
+            rol_l.addWidget(_chip(
+                "Ponderado" if es_pond else "Excluyente",
+                self._ESTILO_CHIP_ROL_POND if es_pond
+                else self._ESTILO_CHIP_ROL_EXCL,
+                tooltip="Definido en el Paso 4; vuelva a ese paso para cambiarlo.",
+            ))
+        else:
+            rol_l.addWidget(_chip("Excluyente", self._ESTILO_CHIP_ROL_EXCL,
+                                  tooltip="En modo dicotómico todos los "
+                                          "criterios son excluyentes."))
+        rol_l.addStretch()
+        row.addWidget(rol_w)
+
         # Columna de estado — chip alineado a la izquierda en ancho fijo
         texto, estilo, tip = self._estado_mapeo(criterio)
         estado_w = QWidget()
@@ -1875,16 +2001,139 @@ class PaginaMapeo(QWidget):
         accion_w.setStyleSheet("background: transparent;")
         accion_l = QHBoxLayout(accion_w)
         accion_l.setContentsMargins(0, 0, 0, 0)
-        btn = QPushButton("Configurar mapeo…")
+        if self._es_continuo(criterio):
+            btn = QPushButton("Configurar umbrales…")
+            btn.clicked.connect(lambda checked=False, c=criterio, e=etq_estado:
+                                self._abrir_umbrales(c, e))
+        else:
+            btn = QPushButton("Configurar mapeo…")
+            btn.clicked.connect(lambda checked=False, c=criterio, e=etq_estado:
+                                self._abrir_mapeo(c, e))
         btn.setStyleSheet(ESTILO_BOTON_SECUNDARIO)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.clicked.connect(lambda checked=False, c=criterio, e=etq_estado:
-                            self._abrir_mapeo(c, e))
         accion_l.addWidget(btn)
         row.addWidget(accion_w)
 
         row.addStretch(1)
         return w
+
+    def _abrir_umbrales(self, criterio, etq_estado):
+        """Diálogo de umbrales para criterios de superficie continua.
+
+        Muestra solo lo que aplica al rol vigente: el umbral que descarta si el
+        criterio es excluyente, la escala de puntaje si es ponderado. Enseñar
+        ambos invitaría a llenar campos que el análisis va a ignorar.
+        """
+        from qgis.PyQt.QtWidgets import (
+            QDialog, QDialogButtonBox, QFormLayout, QDoubleSpinBox,
+        )
+
+        es_lejania = getattr(criterio.tipo_exclusion, "value", "") == "lejania"
+        unidad = getattr(criterio, "unidad_umbral", "") or ""
+        ponderado = (self._modo == "ponderado"
+                     and criterio.rol_ponderado == "ponderado")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Umbrales — {criterio.nombre}")
+        dlg.setMinimumWidth(460)
+        v = QVBoxLayout(dlg)
+
+        explicacion = QLabel(
+            (f"Este criterio se evalúa por la <b>distancia de cada punto del "
+             f"territorio a la geometría más cercana</b> de la capa, no por "
+             f"traslape.")
+            if es_lejania else
+            (f"Este criterio se evalúa por el <b>valor de cada celda</b> del "
+             f"ráster, no por traslape.")
+        )
+        explicacion.setWordWrap(True)
+        explicacion.setStyleSheet(f"font-size: {FS_CUERPO}px; color: {COLOR_TEXTO};")
+        v.addWidget(explicacion)
+        v.addWidget(_separador())
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        def _spin(valor, maximo, sufijo):
+            s = QDoubleSpinBox()
+            s.setRange(0.0, maximo)
+            s.setDecimals(0 if maximo > 1000 else 1)
+            s.setSingleStep(maximo / 100.0)
+            s.setSuffix(f" {sufijo}" if sufijo else "")
+            s.setValue(float(valor if valor is not None else 0.0))
+            s.setMinimumWidth(140)
+            return s
+
+        maximo = 200_000.0 if es_lejania else 100.0
+        spins = {}
+
+        if ponderado:
+            spins["optimo"] = _spin(
+                getattr(criterio, "escala_optimo", None), maximo, unidad)
+            spins["peor"] = _spin(
+                getattr(criterio, "escala_peor", None), maximo, unidad)
+            form.addRow("Valor óptimo — puntaje 1.00:", spins["optimo"])
+            form.addRow("Valor peor — puntaje 0.00:", spins["peor"])
+            nota = QLabel(
+                "El puntaje interpola linealmente entre ambos valores y se "
+                "recorta fuera del intervalo. El óptimo puede ser menor o "
+                "mayor que el peor, según si el criterio mejora al acercarse "
+                "o al alejarse."
+            )
+        else:
+            spins["umbral"] = _spin(
+                getattr(criterio, "umbral_exclusion", None), maximo, unidad)
+            form.addRow(
+                "Se descarta lo que esté a más de:" if es_lejania
+                else "Se descarta lo que supere:",
+                spins["umbral"])
+            nota = QLabel(
+                "Toda la superficie que rebase este umbral queda excluida del "
+                "área permitida."
+                if es_lejania else
+                "Toda celda cuyo valor rebase este umbral queda excluida."
+            )
+
+        v.addLayout(form)
+        nota.setWordWrap(True)
+        nota.setStyleSheet(f"font-size: {FS_META}px; color: {COLOR_TEXTO_SUAVE};")
+        v.addWidget(nota)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botones.accepted.connect(dlg.accept)
+        botones.rejected.connect(dlg.reject)
+        v.addWidget(botones)
+
+        if dlg.exec_() == QDialog.Accepted:
+            if ponderado:
+                optimo = spins["optimo"].value()
+                peor = spins["peor"].value()
+                if abs(optimo - peor) < 1e-9:
+                    QMessageBox.warning(
+                        self, "Escala inválida",
+                        "El valor óptimo y el peor no pueden ser iguales: la "
+                        "escala no tendría pendiente y todo el territorio "
+                        "obtendría el mismo puntaje.")
+                    return
+                criterio.escala_optimo = optimo
+                criterio.escala_peor = peor
+            else:
+                criterio.umbral_exclusion = spins["umbral"].value()
+
+            # El Paso 4 edita CRITERIOS_DEFAULT y el Paso 6 edita la copia con
+            # capas: hay que propagar hacia atrás o la sincronización posterior
+            # sobrescribiría lo que el usuario acaba de escribir aquí.
+            for src in CRITERIOS_DEFAULT:
+                if src.id == criterio.id:
+                    src.umbral_exclusion = criterio.umbral_exclusion
+                    src.escala_optimo = criterio.escala_optimo
+                    src.escala_peor = criterio.escala_peor
+                    break
+
+            texto, estilo, tip = self._estado_mapeo(criterio)
+            etq_estado.setText(texto)
+            etq_estado.setStyleSheet(estilo)
+            etq_estado.setToolTip(tip)
 
     def _abrir_mapeo(self, criterio, etq_estado):
         """Abre el diálogo de mapeo y actualiza la etiqueta de estado."""
@@ -2428,7 +2677,7 @@ class AsistenteEvaluacionRSU(QDialog):
         layout.setSpacing(4)
 
         self._indicadores_pasos: list[QLabel] = []
-        pasos = ["Área de interés", "Criterios", "Datos", "Exclusión", "Ponderación", "Mapeo", "Resultados"]
+        pasos = ["Área de interés", "Criterios", "Datos", "Exclusión", "Ponderación", "Configuración", "Resultados"]
 
         for i, nombre in enumerate(pasos):
             lbl = QLabel(f"{i+1}. {nombre}")
@@ -2458,6 +2707,28 @@ class AsistenteEvaluacionRSU(QDialog):
                 lbl.setStyleSheet(self._ESTILO_PASO_HECHO)
             else:
                 lbl.setStyleSheet(self._ESTILO_PASO_INACTIVO)
+
+    def _sincronizar_criterios(self):
+        """Copia activo / peso / buffer / rol y umbrales hacia las capas cargadas.
+
+        PaginaCriterios, PaginaExclusion y PaginaPonderacion editan directamente
+        los objetos de ``CRITERIOS_DEFAULT``. La lista que lleva las capas
+        cargadas es ``pag_datos.criterios``, una copia profunda independiente,
+        de modo que todo lo que el usuario configura tiene que trasladarse antes
+        de que cualquier paso posterior lo lea.
+        """
+        src_por_id = {c.id: c for c in CRITERIOS_DEFAULT}
+        campos = (
+            "activo", "peso", "buffer_m", "rol_ponderado",
+            "umbral_exclusion", "escala_optimo", "escala_peor",
+        )
+        for c in self.pag_datos.criterios:
+            src = src_por_id.get(c.id)
+            if src is None:
+                continue
+            for campo in campos:
+                if hasattr(src, campo):
+                    setattr(c, campo, getattr(src, campo))
 
     def _pagina_siguiente(self):
         n = self._pagina_actual
@@ -2494,6 +2765,10 @@ class AsistenteEvaluacionRSU(QDialog):
             if not ok:
                 QMessageBox.warning(self, "Pesos incorrectos", msg)
                 return
+            # La sincronización debe ocurrir ANTES de configurar el Paso 6: de lo
+            # contrario el mapeo recibe copias que todavía no conocen el rol que
+            # el usuario eligió en el Paso 4, y no puede mostrarlo ni usarlo.
+            self._sincronizar_criterios()
             self.pag_mapeo.configurar(
                 self.pag_datos.criterios,
                 self.pag_criterios.modo_analisis(),
@@ -2501,17 +2776,7 @@ class AsistenteEvaluacionRSU(QDialog):
 
         elif n == 5:
             # Paso 6 (Mapeo) → Paso 7 (Resultados)
-            # Sincronizar activo / peso / buffer_m / rol_ponderado desde CRITERIOS_DEFAULT
-            # (PaginaExclusion, PaginaPonderacion y PaginaCriterios lo modifican directamente)
-            # hacia pag_datos.criterios (la copia profunda que tiene .capa cargada).
-            src_por_id = {c.id: c for c in CRITERIOS_DEFAULT}
-            for c in self.pag_datos.criterios:
-                src = src_por_id.get(c.id)
-                if src is not None:
-                    c.activo = src.activo
-                    c.peso = src.peso
-                    c.buffer_m = src.buffer_m
-                    c.rol_ponderado = src.rol_ponderado
+            self._sincronizar_criterios()
 
             # Configurar motor de análisis con modo seleccionado
             self.pag_resultados.configurar_motor(

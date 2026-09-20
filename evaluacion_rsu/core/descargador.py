@@ -894,10 +894,22 @@ class Descargador(QObject):
         self.progreso.emit(50, "Calculando pendiente del terreno (%)…")
         ruta_pendiente = str(self.directorio_trabajo / "pendiente.tif")
 
+        # Los tiles de Copernicus vienen en EPSG:4326: con SCALE=1 la pendiente
+        # se calcula dividiendo metros entre grados y sale exagerada unas
+        # 111 000 veces, de modo que todo el MDT supera el umbral y el área
+        # entera se descarta por «demasiado empinada».
+        from .analisis import escala_pendiente
+        _capa_dem_tmp = QgsRasterLayer(ruta_dem_merged, "dem_escala_tmp")
+        _escala = escala_pendiente(
+            _capa_dem_tmp.crs() if _capa_dem_tmp.isValid() else None)
+        if _escala != 1.0:
+            self.progreso.emit(
+                -1, f"  MDT en coordenadas geográficas: SCALE={_escala:,.0f}")
+
         processing.run("gdal:slope", {
             "INPUT":         ruta_dem_merged,
             "BAND":          1,
-            "SCALE":         1,
+            "SCALE":         _escala,
             "AS_PERCENT":    True,
             "COMPUTE_EDGES": True,
             "ZEVENBERGEN":   False,

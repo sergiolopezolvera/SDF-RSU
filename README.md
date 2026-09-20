@@ -4,7 +4,7 @@
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B-589632)](https://qgis.org)
 [![Licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-blue)](LICENSE)
-[![Pruebas](https://img.shields.io/badge/pruebas-124%20comprobaciones-success)](pruebas/)
+[![Pruebas](https://img.shields.io/badge/pruebas-145%20comprobaciones-success)](pruebas/)
 
 El plugin responde a una pregunta concreta: *dada un área de estudio, ¿qué superficie queda descartada por las restricciones de ubicación de la norma, y cuál de la restante es más apta?* Descarga los datos oficiales, aplica las distancias del § 6.1 de la **NOM-083-SEMARNAT-2003** y entrega capas de zonas prohibidas y permitidas junto con un reporte que documenta cada decisión.
 
@@ -41,7 +41,18 @@ Los criterios marcados **NOM-083** provienen de las restricciones de ubicación 
 | Localidades urbanas (≥ 2 500 hab) | § 6.1.3 | buffer 500 m | INEGI |
 | Zonas arqueológicas | § 6.1.4 | buffer 200 m | INAH |
 
-Criterios adicionales, fuera del § 6.1: uso de suelo y vegetación (Serie VII), tipo de suelo (edafología), Áreas Destinadas Voluntariamente a la Conservación, pendiente del terreno y red vial.
+Criterios adicionales, fuera del § 6.1: uso de suelo y vegetación (Serie VII), tipo de suelo (edafología) y Áreas Destinadas Voluntariamente a la Conservación.
+
+### Criterios de superficie continua
+
+La **pendiente del terreno** y la **red vial** no se evalúan por traslape: cada punto del territorio tiene un valor —su pendiente, su distancia a la vía más cercana— y el criterio se resuelve comparándolo contra un umbral.
+
+| Criterio | Como excluyente | Como ponderado |
+|---|---|---|
+| Pendiente del terreno | Descarta lo que supere la pendiente máxima (25 % por omisión) | Escala continua entre un valor óptimo y uno peor |
+| Red vial (accesibilidad) | Descarta lo que quede a más de la distancia máxima (5 000 m por omisión) | Escala continua entre un valor óptimo y uno peor |
+
+En el caso de la red vial lo prohibitivo es la **lejanía**, no la cercanía: un sitio no se descarta por estar junto a una carretera sino por quedar fuera del alcance de los camiones recolectores.
 
 ### Sobre el buffer de aeropuertos
 
@@ -66,7 +77,7 @@ El asistente tiene siete pasos.
 3. **Datos** — descargue los datos automáticos o cargue archivos propios. Cada fila muestra su fuente y estado.
 4. **Exclusión** — ajuste las distancias. Los valores predeterminados son los mínimos de la norma; modificarlos es responsabilidad del usuario.
 5. **Ponderación** — asigne pesos a los criterios de aptitud, si usa ese modo.
-6. **Mapeo de atributos** — opcional. Por omisión, toda la geometría de una capa es prohibitiva; configure el mapeo solo si necesita filtrar por los valores de un campo, por ejemplo para excluir ciertas categorías de uso de suelo y no todas.
+6. **Configuración por criterio** — para capas vectoriales, el mapeo de atributos: por omisión toda la geometría es prohibitiva, y solo hace falta configurarlo si necesita filtrar por los valores de un campo. Para pendiente y red vial, el umbral que descarta o la escala de puntaje. El rol de cada criterio se decide en el Paso 4 y aquí solo se consulta.
 7. **Resultados** — ejecute el análisis. El registro detalla cada criterio y el resumen final presenta el balance de superficies y la procedencia de los datos.
 
 ### Formatos de archivo admitidos
