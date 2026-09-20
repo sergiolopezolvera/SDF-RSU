@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# QGIS
+*.qgs~
+*.qgz~
+
+# Salidas del plugin: datos descargados y resultados de análisis
+datos_evaluacion_rsu/
+resultados_rsu/
+
+# Paquetes generados
+*.zip
+
+# Sistema operativo
+.DS_Store
+Thumbs.db

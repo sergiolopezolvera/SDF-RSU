@@ -1,0 +1,121 @@
+[general]
+name=Evaluación RSU
+qgisMinimumVersion=3.16
+description=Evaluación multicriterio para la selección de sitios de disposición final de residuos sólidos urbanos en México (NOM-083-SEMARNAT-2003)
+version=1.5.6
+author=Sergio López Olvera
+email=lopezolverasergio@gmail.com
+
+about=Asistente de siete pasos para el tamizaje territorial de sitios de
+      disposición final de residuos sólidos urbanos conforme a la
+      NOM-083-SEMARNAT-2003.
+
+      El análisis tiene dos etapas:
+      1. Exclusión: identifica la superficie donde la instalación queda
+         descartada por las restricciones de ubicación del § 6.1 de la norma
+         (distancias a cuerpos de agua, áreas naturales protegidas, localidades
+         urbanas, aeródromos, zonas arqueológicas, fallas geológicas y otras).
+      2. Ponderación (opcional): califica la superficie restante con pesos
+         asignados por el usuario y produce un ráster de aptitud relativa.
+
+      Los datos se descargan automáticamente del INEGI, CONANP, CONABIO,
+      OpenStreetMap y el modelo digital de terreno Copernicus GLO-30,
+      recortados al área de interés. Cada criterio admite también la carga de
+      un archivo propio.
+
+      El reporte final documenta la procedencia de cada capa, la regla aplicada
+      y el balance de superficie permitida y prohibida, para que el resultado
+      sea auditable.
+
+      Requiere conexión a internet para la descarga automática de datos.
+
+tracker=https://github.com/sergiolopezolvera/SDF-RSU/issues
+repository=https://github.com/sergiolopezolvera/SDF-RSU
+homepage=https://github.com/sergiolopezolvera/SDF-RSU
+
+tags=analisis multicriterio,residuos solidos,relleno sanitario,INEGI,Mexico,NOM-083,disposicion final,aptitud territorial,evaluacion de sitios
+
+category=Vector
+icon=icon.png
+experimental=True
+deprecated=False
+server=False
+hasProcessingProvider=False
+
+changelog=
+    1.5.6
+    - Enlaces de repositorio, tracker y homepage actualizados al repositorio
+      público del proyecto.
+
+    1.5.5
+    - Primera versión publicada, marcada como experimental.
+    - Corregido: una línea sin sangrar en el changelog impedía que
+      ConfigParser leyera metadata.txt, de modo que el plugin no instalaba.
+    - Pruebas: validación de metadata.txt y del paquete (27 comprobaciones).
+
+    1.5.4
+    - Corregido: la carga manual de archivos construía siempre una capa
+    vectorial, de modo que ningún ráster se podía cargar. Todo .tif, .img o
+    .asc se rechazaba con «Archivo inválido», pese a que el diálogo ofrece el
+    filtro Ráster y el criterio de pendiente pide cargar un MDE a mano.
+    - Un ráster cargado a mano ya fija ruta_raster_continuo, sin lo cual no
+    podía usarse para la ponderación por rango óptimo.
+    - Corregido el texto del criterio de pendiente, que pedía cargar un ráster
+    de pendiente ya calculado cuando el plugin espera un MDE y calcula la
+    pendiente él mismo.
+    - Pruebas: nuevo conjunto de carga de archivos (23 comprobaciones).
+
+    1.5.3
+    - Corregido: la resolución del ráster de ponderación se convertía siempre a
+    grados. Con un área de interés proyectada (p. ej. EPSG:6372, el CRS del
+    Marco Geoestadístico del INEGI) la celda quedaba en 0.9 mm y el análisis
+    de ponderación se quedaba colgado sin explicar por qué.
+    - Un criterio ponderado cuya capa no cubre el área permitida ya no se
+    descarta en silencio: el registro avisa qué peso se perdió y cuál es el
+    máximo real de la escala de aptitud.
+    - Pruebas: nuevo conjunto del modo ponderado (23 comprobaciones) que
+    ejercita rasterización, normalización, suma ponderada y recorte.
+    1.5.2 — Medición de superficies
+    * Corregido: cuando el proyecto de QGIS estaba configurado para medición
+    planimétrica —el valor de fábrica de muchos proyectos— todas las áreas
+    se reportaban como 0.00 km². QGIS devuelve la cadena "NONE" para ese
+    ajuste, que en Python es verdadera, de modo que el respaldo a WGS84
+    nunca se aplicaba y measureArea entregaba grados cuadrados para un área
+    de interés geográfica. Ahora se usa el elipsoide del proyecto si está
+    configurado, el del CRS del área de interés si no, y WGS84 como último
+    recurso.
+    * Añadido un conjunto de pruebas automatizadas que corre sin interfaz
+    contra QGIS real y reproduce cada error corregido.
+    1.5.1 — Uniones tolerantes a errores de topología
+    * Corregido: una sola geometría con autointersecciones hacía que GEOS
+    devolviera una unión vacía, anulando en silencio la aportación de la
+    capa completa. Frecuente en polígonos derivados de OpenStreetMap. Ahora
+    las geometrías inválidas se reparan y, si aún así falla, la unión se
+    acumula de forma incremental omitiendo solo las irrecuperables.
+    * El registro identifica un CRS válido sin código EPSG por su nombre de
+    proyección, en lugar de reportarlo como «sin definir».
+    1.5.0 — Corrección de errores de georreferenciación
+    * Corregido: el filtro espacial construía el rectángulo de búsqueda en el
+    CRS del área de interés y no en el de cada capa consultada, por lo que
+    toda capa en un CRS distinto se leía como vacía.
+    * Corregido: se detecta y compensa el CRS mal declarado de capas cuyas
+    coordenadas son métricas pero cuyo .prj indica grados o falta.
+    * Corregido: la vectorización de la máscara de pendiente no filtraba el
+    valor de la máscara, de modo que podía excluir el área completa.
+    * Corregido: los criterios de traslape no reproyectaban su geometría
+    antes de intersectar con el área de interés.
+    * Toda petición de red pasa ahora por QgsNetworkAccessManager, con lo que
+    se respetan el proxy y la autenticación configurados en QGIS.
+    * La pendiente del terreno se deriva automáticamente del MDT Copernicus
+    GLO-30, con caché de tiles, recorte previo al área de interés y omisión
+    de tiles oceánicos inexistentes.
+    * Nuevo resumen del análisis con balance de superficies y procedencia de
+    cada capa, exportable e independiente del modo de análisis.
+    * El registro documenta por criterio el CRS, el número de elementos
+    considerados y la superficie aportada.
+    * Retirado el selector de tipo de relleno: el § 6.1 de la norma aplica
+    igual a los tipos A, B, C y D.
+    * Eliminado el acceso al WFS wsinfogeo del INEGI, descontinuado por la
+    institución.
+    1.4.0 — Asistente reorganizado en siete pasos, selección de criterios y
+    mapeo de atributos por capa.

@@ -1,0 +1,53 @@
+cff-version: 1.2.0
+message: >
+  Si utilizas este software en tu investigación, tesis o publicación académica,
+  por favor cítalo usando los metadatos de este archivo.
+title: >
+  EvaluaciónRSU: Plugin QGIS para la selección multicriterio de sitios de
+  disposición final de residuos sólidos urbanos conforme a la
+  NOM-083-SEMARNAT-2003
+authors:
+  - family-names: López Olvera
+    given-names: Sergio
+    email: lopezolverasergio@gmail.com
+    orcid: ""          # Agrega tu ORCID aquí si cuentas con uno: https://orcid.org
+version: "1.0.0"
+date-released: "2024-01-01"
+license: GPL-3.0-or-later
+repository-code: https://github.com/sergiolopezolvera/SDF-RSU
+url: https://github.com/sergiolopezolvera/SDF-RSU
+abstract: >
+  Plugin de código abierto para QGIS 3.x que implementa una evaluación
+  multicriterio de dos fases para la selección de sitios aptos para la
+  instalación de rellenos sanitarios en México. La Fase 1 realiza un análisis
+  dicotómico de exclusión conforme a las restricciones del artículo 6.1 de la
+  NOM-083-SEMARNAT-2003, descargando automáticamente datos geográficos desde
+  los servicios WFS de INEGI wsinfogeo (MDM v6.1), CONANP y CONABIO.
+  La Fase 2 calcula un índice de aptitud ponderada mediante suma lineal de
+  criterios geoespaciales configurables por el usuario. El plugin genera
+  reportes HTML autocontenidos con los resultados del análisis.
+keywords:
+  - QGIS
+  - residuos sólidos urbanos
+  - RSU
+  - relleno sanitario
+  - evaluación multicriterio
+  - NOM-083-SEMARNAT-2003
+  - México
+  - análisis espacial
+  - SIG
+  - gestión de residuos
+  - selección de sitios
+preferred-citation:
+  type: software
+  authors:
+    - family-names: López Olvera
+      given-names: Sergio
+      email: lopezolverasergio@gmail.com
+  title: >
+    EvaluaciónRSU: Plugin QGIS para la selección multicriterio de sitios de
+    disposición final de RSU conforme a la NOM-083-SEMARNAT-2003
+  version: "1.0.0"
+  year: 2024
+  license: GPL-3.0-or-later
+  url: https://github.com/sergiolopezolvera/SDF-RSU
