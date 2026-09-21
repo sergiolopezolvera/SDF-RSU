@@ -284,5 +284,60 @@ R.comprobar(
     MotorAnalisis._umbral(c_ok, 25.0) == 12.5)
 
 
+# ===========================================================================
+print("\nCriterios definidos por el usuario")
+# ===========================================================================
+# El diálogo ofrece tres formas de evaluar. Buffer y lejanía son exactamente
+# opuestas: si se confundieran, el mapa resultante sería el complemento del
+# correcto y nada fallaría de forma visible.
+
+from evaluacion_rsu.gui.dialogo_criterio import _id_desde_nombre
+
+R.comprobar(
+    "U.id", "el id se deriva del nombre sin acentos ni signos",
+    _id_desde_nombre("Derecho de vía del gasoducto", set()) ==
+    "usr_derecho_de_via_del_gasoducto",
+    _id_desde_nombre("Derecho de vía del gasoducto", set()))
+R.comprobar(
+    "U.colision", "un nombre repetido no produce un id repetido",
+    _id_desde_nombre("Área ejidal", {"usr_area_ejidal"}) == "usr_area_ejidal_2",
+    "el id viaja a nombres de archivo, así que debe ser único")
+
+LINEA = ["LINESTRING(-96.7 19.1, -96.7 19.5)"]
+
+
+def crit_usuario(tipo, dist):
+    c = Criterio(id="usr_x", nombre="Criterio propio", descripcion="",
+                 es_exclusion=True, tipo_exclusion=tipo, buffer_m=dist,
+                 umbral_exclusion=dist or None, unidad_umbral="m",
+                 activo=True, es_personalizado=True)
+    c.capa = arnes.capa_memoria(LINEA, crs="EPSG:4326", nombre="l",
+                                tipo="LineString")
+    return c
+
+
+pcts = {}
+for tipo, dist in ((TipoExclusion.BUFFER, 3000.0),
+                   (TipoExclusion.LEJANIA, 3000.0)):
+    mm = motor([crit_usuario(tipo, dist)], f"usr_{tipo.value}")
+    mm.ejecutar_fase1()
+    pcts[tipo.value] = mm.resumen_areas["pct_excluida"]
+
+R.comprobar(
+    "U.buffer", "el buffer excluye la franja cercana a la capa",
+    5.0 < pcts["buffer"] < 40.0,
+    f"prohibido = {pcts['buffer']:.2f} %")
+R.comprobar(
+    "U.lejania", "la lejanía excluye todo lo demás",
+    pcts["lejania"] > 60.0,
+    f"prohibido = {pcts['lejania']:.2f} %")
+R.comprobar(
+    "U.complemento", "buffer y lejanía son exactamente complementarios",
+    abs((pcts["buffer"] + pcts["lejania"]) - 100.0) < 0.5,
+    f"{pcts['buffer']:.2f} % + {pcts['lejania']:.2f} % = "
+    f"{pcts['buffer'] + pcts['lejania']:.2f} % — si se confundieran, el mapa "
+    f"sería el complemento del correcto")
+
+
 ok = R.resumen()
 arnes.terminar(0 if ok else 1)

@@ -2,7 +2,7 @@
 name=Evaluación RSU
 qgisMinimumVersion=3.16
 description=Evaluación multicriterio para la selección de sitios de disposición final de residuos sólidos urbanos en México (NOM-083-SEMARNAT-2003)
-version=1.6.0
+version=1.6.1
 author=Sergio López Olvera
 email=lopezolverasergio@gmail.com
 
@@ -43,11 +43,21 @@ server=False
 hasProcessingProvider=False
 
 changelog=
+    1.6.1
+    - Criterios propios: se pueden definir restricciones que la norma no
+      contempla, eligiendo capa y forma de evaluarla (traslape, buffer o
+      distancia maxima).
+    - El icono del plugin se ve por fin: icon.png era una imagen de un solo
+      pixel en verde, de modo que QGIS mostraba un cuadro de color.
+    - Las capas de resultado se agrupan bajo un solo nodo del arbol en lugar
+      de quedar sueltas entre las capas del usuario.
+    - Corregida la linea doble sobre las bandas de seccion de las tablas.
+
     1.6.0
     - Red vial: deja de evaluarse por traslape. Se mide la distancia de cada
       punto a la vía más cercana; como excluyente descarta lo que quede más
       lejos del umbral, y como ponderado usa una escala continua.
-    - Pendiente: el umbral de exclusión dejó de estar fijo en 25 % y la
+    - Pendiente: el umbral de exclusión dejó de estar fijo en 25 por ciento y la
       ponderación admite una escala continua.
     - Corregido: gdal:slope se llamaba con SCALE=1 sobre modelos de elevación
       en coordenadas geográficas (Copernicus, SRTM), lo que exageraba la

@@ -62,7 +62,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from ..core.analisis import MotorAnalisis
-from ..core.criterios import CRITERIOS_DEFAULT, Criterio, FuenteDatos
+from ..core.criterios import CRITERIOS, CRITERIOS_DEFAULT, Criterio, FuenteDatos
 from ..core.descargador import Descargador
 from ..utils.estilos import (
     aplicar_estilo_aptas,
@@ -146,6 +146,11 @@ ESTILO_CABECERA_COL = (
 ESTILO_CHIP_NORMA = (
     "background: #E8F1E9; color: #1B5E20; border: 1px solid #C3DEC6; "
     "border-radius: 9px; padding: 1px 7px; font-size: 9px; font-weight: bold;"
+)
+
+ESTILO_CHIP_PROPIO = (
+    "background: #E8F0FE; color: #1565C0; border: 1px solid #C6DAF7; "
+    "border-radius: 9px; padding: 1px 7px; font-size: 9px;"
 )
 
 
@@ -264,17 +269,21 @@ def _ancho_texto(metricas, texto: str) -> int:
         return metricas.width(texto)
 
 
-def _cabecera_tabla(columnas: list[tuple]) -> QWidget:
+def _cabecera_tabla(columnas: list[tuple],
+                    borde_inferior: bool = True) -> QWidget:
     """Construye la fila de encabezado de una tabla.
 
     columnas: lista de (texto, ancho | None, alineación). Un ancho None deja
     que la columna tome su tamaño natural.
+
+    borde_inferior=False cuando lo que sigue es una banda de sección, que ya
+    aporta su propio límite: con ambos bordes se dibujaban dos líneas juntas.
     """
     w = QWidget()
     w.setStyleSheet(
         f"background: {COLOR_CABECERA}; "
         f"border-top: 1px solid {COLOR_BORDE}; "
-        f"border-bottom: 1px solid {COLOR_BORDE};"
+        + (f"border-bottom: 1px solid {COLOR_BORDE};" if borde_inferior else "")
     )
     lay = QHBoxLayout(w)
     lay.setContentsMargins(8, 7, 8, 7)
@@ -445,14 +454,21 @@ def _celda(
 
 
 def _banda_seccion(texto: str, color_acento: str = COLOR_PRIMARIO) -> QWidget:
-    """Banda de sección a todo el ancho, con barra de acento a la izquierda."""
+    """Banda de sección a todo el ancho, con barra de acento a la izquierda.
+
+    El fondo es blanco, no el gris del encabezado de tabla. Cuando ambos
+    compartían color, la banda que sigue al encabezado parecía una segunda
+    franja del mismo bloque y el borde que los separa se leía como una línea
+    de más.
+    """
     w = QWidget()
     w.setStyleSheet(
-        f"background: {COLOR_CABECERA}; "
-        f"border-left: 3px solid {color_acento};"
+        f"background: #FFFFFF; "
+        f"border-left: 3px solid {color_acento}; "
+        f"border-bottom: 1px solid {COLOR_BORDE};"
     )
     lay = QHBoxLayout(w)
-    lay.setContentsMargins(9, 5, 8, 5)
+    lay.setContentsMargins(9, 7, 8, 6)
     lbl = QLabel(texto.upper())
     lbl.setStyleSheet(
         f"background: transparent; color: {color_acento}; "
@@ -835,9 +851,21 @@ class PaginaCriterios(QWidget):
             "En modo ponderado puede asignar el rol de cada criterio."
         ))
 
+        barra = QWidget()
+        barra_h = QHBoxLayout(barra)
+        barra_h.setContentsMargins(0, 0, 0, 0)
         self._chk_todos = _toggle_todos()
         self._chk_todos.stateChanged.connect(self._toggle_todos_criterios)
-        layout.addWidget(self._chk_todos)
+        barra_h.addWidget(self._chk_todos)
+        barra_h.addStretch()
+        btn_anadir = QPushButton("＋  Añadir criterio…")
+        btn_anadir.setCursor(Qt.PointingHandCursor)
+        btn_anadir.setStyleSheet(ESTILO_BOTON_SECUNDARIO)
+        btn_anadir.setToolTip(
+            "Definir una restricción propia, fuera de las que trae el plugin.")
+        btn_anadir.clicked.connect(self._anadir_criterio)
+        barra_h.addWidget(btn_anadir)
+        layout.addWidget(barra)
 
         # Scroll — el encabezado se construye dentro para alinear columnas
         scroll = QScrollArea()
@@ -877,7 +905,7 @@ class PaginaCriterios(QWidget):
         ]
         if ponderado:
             columnas.append(("Rol del criterio", self._COL_ROL, Qt.AlignLeft))
-        cont_layout.addWidget(_cabecera_tabla(columnas))
+        cont_layout.addWidget(_cabecera_tabla(columnas, borde_inferior=False))
 
         indice = 0
         cont_layout.addWidget(
@@ -891,15 +919,30 @@ class PaginaCriterios(QWidget):
         indice = 0
         cont_layout.addWidget(_banda_seccion("Criterios adicionales", COLOR_SLATE))
         for criterio in CRITERIOS_DEFAULT:
-            if not criterio.obligatorio:
+            if not criterio.obligatorio and not criterio.es_personalizado:
                 cont_layout.addWidget(self._crear_fila(criterio, ponderado, indice))
                 indice += 1
+
+        # ── Criterios del usuario ────────────────────────────────────────
+        propios = [c for c in CRITERIOS_DEFAULT if c.es_personalizado]
+        cont_layout.addWidget(_banda_seccion("Criterios propios", COLOR_INFO))
+        if propios:
+            for indice, criterio in enumerate(propios):
+                cont_layout.addWidget(
+                    self._crear_fila(criterio, ponderado, indice, propio=True))
+        else:
+            vacio = QLabel(
+                "  Sin criterios propios. Use «Añadir criterio…» para incluir "
+                "restricciones que la norma no contempla.")
+            vacio.setStyleSheet(
+                f"color: {COLOR_TEXTO_SUAVE}; font-size: {FS_META}px; padding: 6px 4px;")
+            cont_layout.addWidget(vacio)
 
         cont_layout.addStretch()
         self._scroll_criterios.setWidget(contenedor)
 
-    def _crear_fila(self, criterio, mostrar_rol: bool, indice: int = 0) -> QWidget:
-        from qgis.PyQt.QtWidgets import QButtonGroup as _BG, QRadioButton as _RB
+    def _crear_fila(self, criterio, mostrar_rol: bool, indice: int = 0,
+                    propio: bool = False) -> QWidget:
         w, row = _fila_tabla(indice)
 
         chk = _casilla(criterio.activo, "Incluir este criterio en el análisis")
@@ -923,6 +966,11 @@ class PaginaCriterios(QWidget):
                 "NOM-083", ESTILO_CHIP_NORMA,
                 "Criterio requerido por NOM-083-SEMARNAT-2003.",
             ))
+        elif propio:
+            norma_l.addWidget(_chip(
+                self._regla_corta(criterio), ESTILO_CHIP_PROPIO,
+                f"Criterio definido por usted.\n\n{criterio.descripcion}",
+            ))
         else:
             norma_l.addStretch()
         row.addWidget(norma_w)
@@ -941,8 +989,54 @@ class PaginaCriterios(QWidget):
             self._rol_grupos[criterio.id] = botones
             row.addWidget(rol_w)
 
+        if propio:
+            row.addStretch(1)
+            btn_borrar = QPushButton("Quitar")
+            btn_borrar.setCursor(Qt.PointingHandCursor)
+            btn_borrar.setFixedWidth(72)
+            btn_borrar.setToolTip("Eliminar este criterio de la lista.")
+            btn_borrar.setStyleSheet(ESTILO_BOTON_SECUNDARIO)
+            btn_borrar.clicked.connect(
+                lambda _c=False, c=criterio: self._quitar_criterio(c))
+            row.addWidget(btn_borrar)
+
         row.addStretch(1)
         return w
+
+    @staticmethod
+    def _regla_corta(criterio) -> str:
+        """Resumen de una línea de cómo evalúa un criterio propio."""
+        tipo = getattr(criterio.tipo_exclusion, "value", "")
+        if tipo == "buffer":
+            return f"< {criterio.buffer_m:,.0f} m"
+        if tipo == "lejania":
+            return f"> {criterio.buffer_m:,.0f} m"
+        return "traslape"
+
+    def _anadir_criterio(self):
+        """Abre el diálogo de criterio propio y lo suma a la lista."""
+        from .dialogo_criterio import DialogoCriterioPersonalizado
+        dlg = DialogoCriterioPersonalizado(
+            [c.id for c in CRITERIOS_DEFAULT], parent=self)
+        if dlg.exec_() == QDialog.Accepted and dlg.criterio is not None:
+            CRITERIOS_DEFAULT.append(dlg.criterio)
+            CRITERIOS[dlg.criterio.id] = dlg.criterio
+            self._rebuild_lista()
+
+    def _quitar_criterio(self, criterio):
+        """Elimina un criterio propio, con confirmación."""
+        resp = QMessageBox.question(
+            self, "Quitar criterio",
+            f"¿Quitar «{criterio.nombre}» de la lista de criterios?\n\n"
+            "No se borra ningún archivo: solo deja de evaluarse.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+        CRITERIOS_DEFAULT[:] = [c for c in CRITERIOS_DEFAULT if c.id != criterio.id]
+        CRITERIOS.pop(criterio.id, None)
+        self._checkboxes.pop(criterio.id, None)
+        self._rol_grupos.pop(criterio.id, None)
+        self._rebuild_lista()
 
     def _toggle_todos_criterios(self, state: int):
         """Marca o desmarca todos los criterios de la lista."""
@@ -1236,6 +1330,26 @@ class PaginaDatos(QWidget):
             src = src_por_id.get(c.id)
             if src:
                 c.activo = src.activo
+
+        # Los criterios propios se crean después de que esta página copió la
+        # lista, así que hay que incorporar altas y bajas en cada refresco o no
+        # llegarían nunca al Paso 3 ni al análisis.
+        propios_actuales = {c.id for c in self.criterios}
+        for src in CRITERIOS_DEFAULT:
+            if src.id not in propios_actuales:
+                self.criterios.append(copy.deepcopy(src))
+        vigentes = set(src_por_id)
+        self.criterios[:] = [c for c in self.criterios if c.id in vigentes]
+
+        # Un criterio propio trae su archivo desde el diálogo: se carga solo,
+        # sin obligar al usuario a volver a elegirlo en el Paso 3.
+        for c in self.criterios:
+            if (getattr(c, "es_personalizado", False) and c.capa is None
+                    and c.ruta_dato):
+                capa = QgsVectorLayer(c.ruta_dato, c.nombre, "ogr")
+                if capa.isValid():
+                    c.capa = capa
+                    c.origen_carga = "manual"
 
         # Reconstruir lista (solo criterios activos)
         while self._contenedor_datos_layout.count():
@@ -2237,6 +2351,7 @@ class PaginaResultados(QWidget):
 
         layout.addStretch()
         self._capas_resultado: dict = {}   # almacena capas para el reporte
+        self._grupo_actual = None          # grupo del árbol de capas en curso
 
     def configurar_motor(
         self,
@@ -2296,50 +2411,91 @@ class PaginaResultados(QWidget):
         if msg:
             self.txt_log.append(msg)
 
-    def _on_fase1_lista(self, capa_excluida, capa_apta, capas_criterios):
-        root = QgsProject.instance().layerTreeRoot()
+    # Nombre del grupo que reúne todo lo que produce un análisis.
+    GRUPO_RESULTADOS = "Evaluación RSU"
 
-        # ── Grupo de criterios de exclusión (colapsado, abajo) ──────────────
+    def _grupo_resultados(self):
+        """Grupo raíz del análisis, creado en la cima del árbol de capas.
+
+        Antes cada capa se añadía suelta a la raíz del proyecto y quedaba
+        intercalada con las del usuario —mapas base, capas de trabajo—, de modo
+        que tras dos corridas el panel era una lista larga sin jerarquía. Ahora
+        todo cuelga de un solo nodo que se puede plegar, mover o borrar de una
+        vez.
+
+        Si ya existe un grupo de una corrida anterior se le pone fecha y hora,
+        para poder comparar dos análisis en el mismo proyecto sin que el
+        segundo pise al primero.
+        """
+        from datetime import datetime
+        root = QgsProject.instance().layerTreeRoot()
+        nombre = self.GRUPO_RESULTADOS
+        if root.findGroup(nombre) is not None:
+            nombre = f"{nombre} · {datetime.now():%d/%m %H:%M}"
+        grupo = root.insertGroup(0, nombre)
+        grupo.setExpanded(True)
+        return grupo
+
+    def _on_fase1_lista(self, capa_excluida, capa_apta, capas_criterios):
+        proyecto = QgsProject.instance()
+        grupo = self._grupo_resultados()
+        self._grupo_actual = grupo
+
+        # El orden dentro del grupo es el de lectura del resultado: primero lo
+        # que el usuario busca —dónde SÍ se puede—, luego lo que se descartó, y
+        # al final el desglose por criterio, plegado porque solo se consulta
+        # cuando un número no cuadra.
+        if capa_apta:
+            capa_apta.setName("Zonas aptas (preliminar)")
+            aplicar_estilo_aptas(capa_apta)
+            proyecto.addMapLayer(capa_apta, False)
+            grupo.addLayer(capa_apta)
+            self._capas_resultado["apta"] = capa_apta
+
+        if capa_excluida:
+            capa_excluida.setName("Zonas excluidas")
+            aplicar_estilo_excluidas(capa_excluida)
+            proyecto.addMapLayer(capa_excluida, False)
+            grupo.addLayer(capa_excluida)
+            self._capas_resultado["excluida"] = capa_excluida
+
         if capas_criterios:
-            grupo = root.addGroup("Criterios de exclusión — RSU")
-            grupo.setExpanded(False)
+            sub = grupo.addGroup("Aporte de cada criterio")
+            sub.setExpanded(False)
             for nombre, capa in capas_criterios.items():
                 capa.setName(nombre)
                 _aplicar_estilo_criterio(capa)
-                QgsProject.instance().addMapLayer(capa, False)
-                grupo.addLayer(capa)
+                proyecto.addMapLayer(capa, False)
+                sub.addLayer(capa)
             self._capas_resultado["criterios"] = capas_criterios
-
-        # ── Capas de resultado (arriba del grupo) ───────────────────────────
-        if capa_excluida:
-            capa_excluida.setName("Zonas excluidas — RSU")
-            aplicar_estilo_excluidas(capa_excluida)
-            QgsProject.instance().addMapLayer(capa_excluida)
-            self._capas_resultado["excluida"] = capa_excluida
-        if capa_apta:
-            capa_apta.setName("Zonas aptas (preliminar) — RSU")
-            aplicar_estilo_aptas(capa_apta)
-            QgsProject.instance().addMapLayer(capa_apta)
-            self._capas_resultado["apta"] = capa_apta
 
         n_crit = len(capas_criterios) if capas_criterios else 0
         self.txt_log.append(
-            f"  Capas añadidas al proyecto: {n_crit} de criterios, "
-            f"más zonas excluidas y zonas aptas."
+            f"  Capas añadidas al grupo «{grupo.name()}»: zonas aptas, "
+            f"zonas excluidas y el aporte de {n_crit} criterios."
         )
 
     def _on_fase2_lista(self, raster_aptitud):
         if raster_aptitud:
-            raster_aptitud.setName("Aptitud ponderada — RSU")
+            raster_aptitud.setName("Aptitud ponderada")
             # Registrar el nodata ANTES de calcular estadísticas para la simbología,
             # de lo contrario QGIS incluye las celdas −9999 y la leyenda muestra
             # valores absurdos (±1.79e+308).
             raster_aptitud.dataProvider().setNoDataValue(1, -9999.0)
             aplicar_pseudocolor_aptitud(raster_aptitud)
-            QgsProject.instance().addMapLayer(raster_aptitud)
+
+            # Va dentro del mismo grupo y hasta arriba: es el resultado final
+            # del modo ponderado, y sobre él se lee todo lo demás.
+            grupo = getattr(self, "_grupo_actual", None)
+            if grupo is not None:
+                QgsProject.instance().addMapLayer(raster_aptitud, False)
+                grupo.insertLayer(0, raster_aptitud)
+            else:
+                QgsProject.instance().addMapLayer(raster_aptitud)
+
             self._capas_resultado["aptitud"] = raster_aptitud
             self.txt_log.append(
-                "  Ráster de aptitud añadido al proyecto."
+                "  Ráster de aptitud añadido al grupo de resultados."
             )
 
     # ------------------------------------------------------------------
@@ -2455,17 +2611,17 @@ class PaginaResultados(QWidget):
         # ── Capas generadas ─────────────────────────────────────────────
         capas = []
         if "excluida" in self._capas_resultado:
-            capas.append("<b>Zonas excluidas — RSU</b>: superficie donde la "
+            capas.append("<b>Zonas excluidas</b>: superficie donde la "
                          "instalación queda descartada por al menos un criterio.")
         if "apta" in self._capas_resultado:
-            capas.append("<b>Zonas aptas (preliminar) — RSU</b>: superficie que "
+            capas.append("<b>Zonas aptas (preliminar)</b>: superficie que "
                          "no incumple ningún criterio de exclusión evaluado.")
         if "criterios" in self._capas_resultado:
-            capas.append(f"<b>Criterios de exclusión — RSU</b>: grupo con "
+            capas.append(f"<b>Aporte de cada criterio</b>: subgrupo con "
                          f"{len(self._capas_resultado['criterios'])} capas, una por "
                          f"criterio que aportó exclusión.")
         if "aptitud" in self._capas_resultado:
-            capas.append("<b>Aptitud ponderada — RSU</b>: ráster de aptitud "
+            capas.append("<b>Aptitud ponderada</b>: ráster de aptitud "
                          "relativa (0–1) recortado al área permitida.")
         lista_capas = "".join(f"<li>{c}</li>" for c in capas) or "<li>—</li>"
 

@@ -4,7 +4,7 @@
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B-589632)](https://qgis.org)
 [![Licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-blue)](LICENSE)
-[![Pruebas](https://img.shields.io/badge/pruebas-145%20comprobaciones-success)](pruebas/)
+[![Pruebas](https://img.shields.io/badge/pruebas-151%20comprobaciones-success)](pruebas/)
 
 El plugin responde a una pregunta concreta: *dada un área de estudio, ¿qué superficie queda descartada por las restricciones de ubicación de la norma, y cuál de la restante es más apta?* Descarga los datos oficiales, aplica las distancias del § 6.1 de la **NOM-083-SEMARNAT-2003** y entrega capas de zonas prohibidas y permitidas junto con un reporte que documenta cada decisión.
 
@@ -43,6 +43,18 @@ Los criterios marcados **NOM-083** provienen de las restricciones de ubicación 
 
 Criterios adicionales, fuera del § 6.1: uso de suelo y vegetación (Serie VII), tipo de suelo (edafología) y Áreas Destinadas Voluntariamente a la Conservación.
 
+### Criterios propios
+
+La norma fija un mínimo, no un máximo. Desde el Paso 2 puede añadir restricciones que el plugin no trae —un derecho de vía, un polígono ejidal, un área acordada con la comunidad— indicando su capa y cómo se evalúa:
+
+| Forma de evaluar | Qué prohíbe |
+|---|---|
+| Traslape | Donde la capa se superpone con el terreno |
+| Buffer | Lo que quede a **menos** de una distancia de la capa |
+| Distancia máxima | Lo que quede a **más** de una distancia de la capa |
+
+Las dos últimas son inversas. La segunda es la habitual —alejarse de algo que estorba—; la tercera solo tiene sentido para criterios de acceso o servicio.
+
 ### Criterios de superficie continua
 
 La **pendiente del terreno** y la **red vial** no se evalúan por traslape: cada punto del territorio tiene un valor —su pendiente, su distancia a la vía más cercana— y el criterio se resuelve comparándolo contra un umbral.
@@ -73,7 +85,7 @@ Si actualiza sobre una instalación previa, **reinicie QGIS**: el módulo puede 
 El asistente tiene siete pasos.
 
 1. **Área de interés** — seleccione una capa de polígonos, dibújela sobre el mapa o cárguela desde un archivo. Defina el directorio de trabajo.
-2. **Criterios** — elija el modo de análisis y qué criterios incluir.
+2. **Criterios** — elija el modo de análisis y qué criterios incluir. Aquí también puede añadir criterios propios.
 3. **Datos** — descargue los datos automáticos o cargue archivos propios. Cada fila muestra su fuente y estado.
 4. **Exclusión** — ajuste las distancias. Los valores predeterminados son los mínimos de la norma; modificarlos es responsabilidad del usuario.
 5. **Ponderación** — asigne pesos a los criterios de aptitud, si usa ese modo.

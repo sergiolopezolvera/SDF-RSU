@@ -53,6 +53,17 @@ sin_sangrar = [
     (n + 1, l) for n, l in enumerate(crudo)
     if l.strip() and not l[0].isspace() and "=" not in l and not l.startswith("[")
 ]
+# El signo «%» es el marcador de interpolación de ConfigParser: uno suelto
+# hace fallar la lectura del archivo entero, igual que una línea sin sangrar.
+# Escribir «por ciento» evita depender de si quien lee usa raw=True.
+por_cientos = [(n + 1, l) for n, l in enumerate(crudo)
+               if "%" in l and "%%" not in l]
+R.comprobar(
+    "D3", "no hay signos de porcentaje sueltos",
+    not por_cientos,
+    "; ".join(f"línea {n}: {l.strip()[:45]!r}" for n, l in por_cientos[:3])
+    or "ninguno")
+
 R.comprobar(
     "D2", "ninguna línea de continuación quedó sin sangrar",
     not sin_sangrar,

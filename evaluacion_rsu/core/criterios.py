@@ -144,6 +144,11 @@ class Criterio:
     # "NOM-083" y los no-obligatorios en "Criterios personalizados".
     obligatorio: bool = True
 
+    # True cuando el usuario definió el criterio desde la interfaz, en lugar de
+    # venir con el plugin. Estos se pueden borrar y no traen descarga
+    # automática: su capa la aporta el usuario.
+    es_personalizado: bool = False
+
     # ── Mapeo de columna para capas cargadas manualmente ───────────────────
     # filtro_tipo: None = usar todas las geometrías (sin filtro de atributos)
     #              "continuo"   = filtrar por rango numérico
